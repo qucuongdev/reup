@@ -1,0 +1,2 @@
+Native local là cấu hình chuẩn cho MVP. Docker và docker-compose chưa triển khai.
+Engine có Python/dependency/model, và GPU nếu bật, riêng với backend; backend container không tự chạy engine trên host. Không tạo compose chưa kiểm chứng để báo tính năng hoàn tất. Pipeline native và CPU profile được hướng dẫn trong README. Có thể bổ sung Docker sau khi chọn cấu hình engine trong container và kiểm chứng bằng integration thực tế.

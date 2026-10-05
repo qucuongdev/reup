@@ -1,0 +1,25 @@
+# Headless vtv subset for upstream commit 9945754bbe6d7a7108eb7eee941311a87f89d69e.
+# Install in ENGINE Python 3.10, never in backend venv.
+# Torch/torchaudio 2.7.1 CPU installed separately from official PyTorch index.
+# Optional cloud ASR, voice cloning and GUI addons are outside this MVP profile.
+PySide6-Essentials==6.9.2
+faster-whisper==1.2.1
+ctranslate2==4.8.0
+numpy==1.26.0
+pydub==0.25.1
+soundfile==0.13.1
+requests[socks]==2.32.5
+edge-tts==7.2.7
+srt==3.5.2
+tenacity==9.1.2
+tqdm==4.67.1
+huggingface-hub==1.10.0
+psutil==6.0.0
+zhconv==1.4.3
+regex==2026.6.28
+librosa==0.11.0
+scipy==1.15.3
+pillow==12.1.1
+httpx[socks]==0.28.1
+pyrubberband==0.4.0
+pytsmod==0.3.8

@@ -1,0 +1,2 @@
+# Optional development verification; uses installed Google Chrome, no model mocks.
+playwright==1.63.0
