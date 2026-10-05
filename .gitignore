@@ -1,14 +1,3 @@
-.env
-.venv/
-__pycache__/
-.pytest_cache/
 .ruff_cache/
-*.egg-info/
-node_modules/
-dist/
-workspace/**
-!workspace/**/
-!workspace/**/.gitkeep
-workspace/temp/*
-!workspace/temp/.gitkeep
-*.sqlite*
+.runtime/
+/python-runtime.zip

@@ -1,0 +1,878 @@
+# ROLE
+Bạn là Senior Full-stack Engineer + AI/Media Pipeline Engineer.
+
+Nhiệm vụ: tạo một repo mới để xây dựng tool **Video Localizer** chạy local, dùng `pyVideoTrans` làm core dịch/lồng tiếng, sau đó bổ sung downloader và post-processing riêng.
+
+Không viết lại những chức năng mà `pyVideoTrans`, `yt-dlp` hoặc `FFmpeg` đã làm tốt.
+
+---
+
+# OBJECTIVE
+
+Xây dựng MVP có luồng:
+
+```text
+Video URL hoặc file local
+→ Download nếu là URL
+→ Dịch/lồng tiếng bằng pyVideoTrans
+→ Chinese/English/... → Vietnamese
+→ Subtitle
+→ Resize/crop
+→ Watermark tùy chọn
+→ Generate thumbnail
+→ Render video cuối
+→ Lưu output + metadata
+```
+
+Mục tiêu cuối:
+
+Người dùng nhập một URL video hoặc upload file local, chọn cấu hình, bấm Process và nhận được:
+
+```text
+final.mp4
+thumbnail.jpg
+subtitle.srt
+metadata.json
+```
+
+---
+
+# CORE PRINCIPLE
+
+`pyVideoTrans` phải được xem như **external/core engine**, KHÔNG fork và sửa sâu source code của nó nếu chưa thật sự cần thiết.
+
+Ưu tiên:
+
+```text
+our app
+   ↓
+adapter/service layer
+   ↓
+pyVideoTrans CLI/API
+```
+
+Thay vì:
+
+```text
+copy source pyVideoTrans
+→ sửa trực tiếp khắp nơi
+```
+
+Mục tiêu là sau này có thể update pyVideoTrans mà không phá app.
+
+---
+
+# TECH STACK
+
+Ưu tiên stack đơn giản, dễ chạy local:
+
+Backend:
+- Python 3.11+
+- FastAPI
+- Pydantic
+- SQLite cho MVP
+- subprocess hoặc wrapper phù hợp để gọi external tools
+
+Media:
+- pyVideoTrans
+- yt-dlp
+- FFmpeg / ffprobe
+
+Frontend:
+- React + TypeScript
+- Vite
+- UI đơn giản, sạch, không cần design system phức tạp
+
+Không dùng Kubernetes, microservice hoặc distributed system ở MVP.
+
+---
+
+# REPOSITORY STRUCTURE
+
+Tạo repo theo hướng:
+
+```text
+video-localizer/
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── models/
+│   │   ├── schemas/
+│   │   ├── services/
+│   │   │   ├── downloader/
+│   │   │   ├── translator/
+│   │   │   ├── postprocess/
+│   │   │   ├── thumbnail/
+│   │   │   └── renderer/
+│   │   ├── jobs/
+│   │   └── main.py
+│   ├── tests/
+│   └── requirements.txt
+│
+├── frontend/
+│   ├── src/
+│   └── package.json
+│
+├── workspace/
+│   ├── input/
+│   ├── temp/
+│   ├── output/
+│   └── thumbnails/
+│
+├── scripts/
+├── docker/
+├── .env.example
+├── docker-compose.yml
+└── README.md
+```
+
+Có thể điều chỉnh structure nếu có lý do kỹ thuật rõ ràng, nhưng không over-engineer.
+
+---
+
+# FUNCTIONAL REQUIREMENTS
+
+## 1. Input
+
+Hỗ trợ 2 loại input:
+
+### URL
+
+Ví dụ:
+
+```text
+https://youtube.com/...
+```
+
+Download bằng `yt-dlp`.
+
+Không tự bypass DRM hoặc cơ chế bảo vệ nội dung.
+
+### Local file
+
+Cho phép upload:
+
+```text
+.mp4
+.mov
+.mkv
+.webm
+```
+
+---
+
+# 2. Job model
+
+Mỗi lần xử lý tạo một Job.
+
+Job tối thiểu:
+
+```text
+id
+source_type
+source_url
+source_file
+source_language
+target_language
+voice
+output_ratio
+subtitle_enabled
+watermark_enabled
+thumbnail_enabled
+status
+progress
+current_step
+error
+created_at
+updated_at
+```
+
+Status:
+
+```text
+queued
+downloading
+transcribing
+translating
+dubbing
+postprocessing
+rendering
+completed
+failed
+```
+
+---
+
+# 3. Downloader
+
+Tạo abstraction:
+
+```python
+class VideoDownloader:
+    def download(url) -> DownloadResult:
+        ...
+```
+
+Implementation MVP:
+
+```text
+YtDlpDownloader
+```
+
+Output:
+
+```text
+source.mp4
+source_metadata.json
+```
+
+Metadata cố gắng lấy:
+
+```text
+title
+description
+duration
+width
+height
+fps
+source_url
+```
+
+---
+
+# 4. pyVideoTrans adapter
+
+Không copy toàn bộ logic của pyVideoTrans.
+
+Tạo abstraction:
+
+```python
+class TranslationEngine:
+    def process(input_video, config) -> TranslationResult:
+        ...
+```
+
+Implementation:
+
+```text
+PyVideoTransEngine
+```
+
+Adapter chịu trách nhiệm:
+
+- truyền input video
+- source language
+- target language
+- ASR engine
+- translation engine
+- TTS engine
+- output path
+- capture logs
+- capture exit code
+- phát hiện lỗi
+
+Mặc định MVP:
+
+```text
+source_language = zh-cn
+target_language = vi
+ASR = faster-whisper
+TTS = Edge-TTS
+```
+
+Translation engine phải configurable qua `.env`.
+
+Không hard-code API key trong source.
+
+---
+
+# 5. Output từ translation stage
+
+Sau stage dịch cần cố gắng chuẩn hóa thành:
+
+```text
+translated_video.mp4
+subtitle.srt
+translated_text.txt
+```
+
+Nếu pyVideoTrans tạo tên/path khác nhau, adapter phải map lại.
+
+---
+
+# 6. Post-processing
+
+Tách thành module riêng, dùng FFmpeg.
+
+Hỗ trợ:
+
+```text
+original
+16:9
+9:16
+1:1
+```
+
+Resolution mặc định:
+
+```text
+16:9 → 1920x1080
+9:16 → 1080x1920
+1:1  → 1080x1080
+```
+
+Không được stretch video.
+
+Dùng:
+
+```text
+scale + crop
+```
+
+hoặc:
+
+```text
+scale + pad
+```
+
+tùy config.
+
+Tạo abstraction:
+
+```python
+class VideoProcessor:
+    resize(...)
+    crop(...)
+    add_watermark(...)
+    normalize_audio(...)
+    burn_subtitle(...)
+```
+
+---
+
+# 7. Subtitle
+
+Cho phép:
+
+```text
+subtitle_enabled = true/false
+```
+
+Nếu bật:
+
+- giữ file `.srt`
+- có option burn subtitle vào video
+
+Không hard-code style quá phức tạp ở MVP.
+
+---
+
+# 8. Watermark
+
+Cho phép upload một PNG watermark.
+
+Config:
+
+```text
+position:
+- top-left
+- top-right
+- bottom-left
+- bottom-right
+
+opacity
+margin
+scale
+```
+
+Không bắt buộc.
+
+---
+
+# 9. Thumbnail generator
+
+Thumbnail là output riêng, không phải video frame overlay.
+
+Flow:
+
+```text
+final video
+→ extract representative frame
+→ resize 1280x720
+→ optional title overlay
+→ optional branding
+→ thumbnail.jpg
+```
+
+MVP chưa cần AI image generation.
+
+Cho phép chọn:
+
+```text
+auto
+timestamp
+```
+
+Nếu auto thì lấy frame khoảng 30% duration hoặc một chiến lược đơn giản, deterministic.
+
+---
+
+# 10. Final output
+
+Workspace theo Job:
+
+```text
+workspace/jobs/{job_id}/
+├── source/
+├── translation/
+├── postprocess/
+├── final/
+│   ├── final.mp4
+│   ├── thumbnail.jpg
+│   ├── subtitle.srt
+│   └── metadata.json
+└── logs/
+```
+
+Không ghi file lung tung vào repo root.
+
+---
+
+# 11. API
+
+Tối thiểu tạo:
+
+```text
+POST   /api/jobs
+GET    /api/jobs
+GET    /api/jobs/{id}
+POST   /api/jobs/{id}/start
+POST   /api/jobs/{id}/retry
+DELETE /api/jobs/{id}
+GET    /api/jobs/{id}/files
+```
+
+Upload endpoint nếu cần tách riêng.
+
+---
+
+# 12. Frontend
+
+Tạo UI MVP gồm 2 màn.
+
+## Create Job
+
+Fields:
+
+```text
+Source
+[ URL / Upload ]
+
+Source language
+[ Chinese ]
+
+Target language
+[ Vietnamese ]
+
+Voice
+[ Vietnamese voice ]
+
+Format
+[ Original / 16:9 / 9:16 / 1:1 ]
+
+[ ] Subtitle
+[ ] Burn subtitle
+[ ] Watermark
+[ ] Generate thumbnail
+
+[ Process ]
+```
+
+## Jobs
+
+Hiển thị:
+
+```text
+Video
+Status
+Current step
+Progress
+Created
+Actions
+```
+
+Progress:
+
+```text
+Downloading
+Transcribing
+Translating
+Dubbing
+Post-processing
+Rendering
+Done
+```
+
+Cho phép xem log lỗi.
+
+Không làm dashboard analytics ở MVP.
+
+---
+
+# 13. Execution model
+
+MVP chạy local.
+
+Không cần Celery/Redis nếu chưa cần thiết.
+
+Có thể dùng:
+
+```text
+FastAPI BackgroundTasks
+```
+
+hoặc một worker queue nội bộ đơn giản.
+
+Nhưng code phải tách abstraction để sau này có thể thay bằng Redis/Celery.
+
+Không block HTTP request trong toàn bộ quá trình render video.
+
+---
+
+# 14. Error handling
+
+Mọi external process:
+
+```text
+yt-dlp
+ffmpeg
+pyVideoTrans
+```
+
+phải capture:
+
+```text
+stdout
+stderr
+return_code
+```
+
+Nếu fail:
+
+```text
+job.status = failed
+job.error = meaningful message
+```
+
+Không swallow exception.
+
+---
+
+# 15. Logging
+
+Log theo job:
+
+```text
+timestamp
+level
+step
+message
+```
+
+Lưu vào:
+
+```text
+workspace/jobs/{job_id}/logs/job.log
+```
+
+---
+
+# 16. Environment check
+
+Khi startup phải kiểm tra:
+
+```text
+python
+ffmpeg
+ffprobe
+yt-dlp
+pyVideoTrans
+```
+
+Nếu thiếu dependency thì báo rõ.
+
+Không crash với stack trace khó hiểu.
+
+---
+
+# 17. Configuration
+
+Tạo:
+
+```text
+.env.example
+```
+
+Ví dụ:
+
+```text
+WORKSPACE_DIR=
+PYVIDEOTRANS_PATH=
+FFMPEG_PATH=
+YTDLP_PATH=
+
+DEFAULT_SOURCE_LANGUAGE=zh-cn
+DEFAULT_TARGET_LANGUAGE=vi
+
+TRANSLATION_PROVIDER=
+TRANSLATION_API_KEY=
+
+TTS_PROVIDER=
+```
+
+Không commit secret.
+
+---
+
+# 18. Docker
+
+Chỉ tạo Docker nếu không làm phức tạp việc GPU/pyVideoTrans.
+
+Nếu Docker gây khó cho pyVideoTrans hoặc GPU thì:
+
+- ưu tiên native local setup
+- Docker chỉ dành cho backend/frontend
+
+README phải ghi rõ limitation.
+
+---
+
+# NON-FUNCTIONAL REQUIREMENTS
+
+Code phải:
+
+- modular
+- typed
+- dễ đọc
+- không tạo abstraction vô nghĩa
+- không tạo pattern enterprise dư thừa
+- không tạo microservice
+- không thêm Redis/Postgres nếu SQLite đủ
+- không thêm authentication ở MVP
+- không thêm cloud dependency nếu không cần
+
+Ưu tiên:
+
+```text
+working software
+> architecture phức tạp
+```
+
+---
+
+# IMPORTANT RESTRICTIONS
+
+1. Không tự ý thay pyVideoTrans bằng engine khác.
+
+2. Không rewrite Whisper/TTS/translation engine từ đầu.
+
+3. Không sửa sâu source pyVideoTrans nếu adapter có thể giải quyết.
+
+4. Không tự động upload video lên YouTube/TikTok/Facebook ở MVP.
+
+5. Không implement bypass DRM, paywall hoặc platform protection.
+
+6. Không hard-code API key.
+
+7. Không fake progress.
+
+Progress phải map vào các stage thực tế.
+
+8. Không tạo mock feature rồi ghi là hoàn thành.
+
+Nếu một chức năng chưa implement được, ghi rõ:
+
+```text
+TODO
+```
+
+và giải thích trong README.
+
+9. Không tự động clone voice người thật nếu chưa có explicit configuration của người dùng.
+
+10. Không xóa audio/video nguồn trước khi job hoàn tất.
+
+---
+
+# LEGAL / CONTENT BOUNDARY
+
+Tool chỉ là media localization pipeline.
+
+Không implement tính năng nhằm:
+
+- bypass copyright protection
+- bypass DRM
+- né Content ID
+- thay đổi video để tránh copyright detection
+
+README ghi rõ người dùng phải có quyền sử dụng nội dung nguồn.
+
+---
+
+# DEVELOPMENT ORDER
+
+Thực hiện đúng thứ tự:
+
+## Phase 1 — Bootstrap
+
+- tạo repo
+- backend
+- frontend
+- config
+- workspace
+
+## Phase 2 — Downloader
+
+Test URL → local video.
+
+## Phase 3 — pyVideoTrans adapter
+
+Test:
+
+```text
+Chinese video
+→ Vietnamese video
+```
+
+Đây là milestone quan trọng nhất.
+
+Không làm UI nâng cao trước khi milestone này chạy được.
+
+## Phase 4 — Job system
+
+Job + status + logs + progress.
+
+## Phase 5 — Post-processing
+
+Resize/crop/subtitle/watermark.
+
+## Phase 6 — Thumbnail
+
+Generate thumbnail.
+
+## Phase 7 — Frontend
+
+Connect toàn bộ pipeline.
+
+## Phase 8 — Testing + README
+
+---
+
+# TEST REQUIREMENTS
+
+Viết test cho các phần không phụ thuộc model nặng:
+
+```text
+job lifecycle
+path handling
+config
+FFmpeg command builder
+ratio calculation
+metadata
+API validation
+```
+
+External engine test có thể là integration test.
+
+Không mock toàn bộ hệ thống rồi tuyên bố pipeline hoạt động.
+
+---
+
+# ACCEPTANCE CRITERIA
+
+MVP chỉ được coi là hoàn thành khi thực tế chạy được flow:
+
+```text
+1. User nhập URL hoặc upload MP4
+
+2. Tool tạo Job
+
+3. Download video nếu cần
+
+4. pyVideoTrans nhận video
+
+5. ASR nhận diện lời nói
+
+6. Dịch sang Vietnamese
+
+7. Tạo Vietnamese TTS
+
+8. Sinh video đã dub
+
+9. Sinh subtitle
+
+10. Resize thành 9:16 hoặc 16:9
+
+11. Generate thumbnail
+
+12. Render
+
+13. UI hiển thị Completed
+
+14. User tải được:
+
+    final.mp4
+    thumbnail.jpg
+    subtitle.srt
+    metadata.json
+```
+
+---
+
+# FIRST TASK
+
+Bắt đầu bằng:
+
+1. kiểm tra repository/workspace hiện tại;
+2. tạo repo `video-localizer`;
+3. tạo architecture tối thiểu;
+4. viết README architecture;
+5. implement backend bootstrap;
+6. implement environment/dependency checker;
+7. implement `yt-dlp` downloader;
+8. implement `PyVideoTransEngine` adapter;
+9. chứng minh pipeline:
+
+```text
+local video
+→ pyVideoTrans
+→ Vietnamese output
+```
+
+trước khi làm các feature tiếp theo.
+
+Không dừng lại ở việc viết plan.
+
+Hãy thực sự tạo source code, chạy test/lint phù hợp và sửa lỗi phát hiện được.
+
+Nếu dependency bên ngoài chưa được cài, code phần integration hoàn chỉnh nhất có thể và ghi chính xác command cần chạy để hoàn tất setup.
+
+---
+
+# FINAL REPORT
+
+Sau khi làm xong, báo cáo ngắn gọn:
+
+```text
+1. Đã tạo những gì
+2. Structure repo
+3. Pipeline hiện chạy đến đâu
+4. Command để chạy
+5. Dependency cần cài
+6. Test đã chạy
+7. Feature nào chưa hoàn thành
+8. File quan trọng cần review
+```
+
+Không tuyên bố "Done" nếu pipeline thực tế chưa đạt Acceptance Criteria.
